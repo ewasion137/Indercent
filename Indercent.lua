@@ -30,16 +30,52 @@ local skyboxes = {
 }
 local current_sky_index = 1
 
--- Функция применения неба
+local ffi = require("ffi")
+
+-- [[ 1. ПОДГОТОВКА FFI ]] --
+ffi.cdef[[
+    typedef struct {
+        void* vtable;
+        void* next;
+        const char* name;
+        const char* help_string;
+        uint32_t flags; // Оффсет 0x18
+    } convar_ptr_t;
+
+    typedef void* (__stdcall* tCreateInterface)(const char* name, int* return_code);
+    typedef convar_ptr_t* (__thiscall* tFindVar)(void* thisptr, const char* name);
+]]
+
+-- Получаем доступ к интерфейсу конваров напрямую из tier0.dll
+local create_interface_ptr = find_export("tier0.dll", "CreateInterface")
+local create_interface = ffi.cast("tCreateInterface", create_interface_ptr)
+local icvar_ptr = create_interface("VEngineCvar007", nil)
+
+-- Ищем функцию FindVar в VTable (в CS2 это обычно 16-й индекс)
+local icvar_vtable = ffi.cast("void***", icvar_ptr)[0]
+local find_var = ffi.cast("tFindVar", icvar_vtable[16])
+
+-- [[ 2. ФУНКЦИЯ РАЗБЛОКИРОВКИ И ЗАПИСИ ]] --
 local function apply_skybox(index)
-    local sky = skyboxes[index]
+    local sky_name = skyboxes[index]
     
-    -- Выполняем консольную команду изменения неба 
-    -- (Никсвар должен байпасить sv_cheats для таких команд)
-    engine.execute_client_cmd("sv_skyname " .. sky)
+    -- Ищем указатель на конвар в памяти игры
+    local raw_cvar = find_var(icvar_ptr, "sv_skyname")
     
-    -- Выводим сообщение в консоль красивым цветом
-    color_print("[Nixware Skybox] Установлено небо: " .. sky .. "\n", color_t(100, 200, 255, 255))
+    if raw_cvar ~= nil then
+        -- 0x2000 - это флаг FCVAR_REPLICATED (защита сервера)
+        -- 0x4000 - это флаг FCVAR_CHEAT (требует sv_cheats 1)
+        -- Мы просто обнуляем флаги защиты, чтобы игра разрешила нам запись
+        raw_cvar.flags = 0 
+
+        -- Теперь, когда защита снята, используем стандартный метод Никсвара 
+        -- или просто вызываем команду через консоль - теперь она СРАБОТАЕТ
+        engine.execute_client_cmd('sv_skyname "' .. sky_name .. '"')
+        
+        color_print("[Nixware Skybox] Защита снята! Небо изменено на: " .. sky_name .. "\n", color_t(100, 255, 100, 255))
+    else
+        color_print("[Nixware Skybox] Ошибка: Не удалось найти указатель на sv_skyname!\n", color_t(255, 100, 100, 255))
+    end
 end
 
 -- [[ 3. ОБРАБОТКА СОБЫТИЙ (ИВЕНТЫ) ]] --
