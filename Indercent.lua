@@ -1,63 +1,91 @@
--- [[ Indercent.lua | Nixware CS2 | Hard & Compact ]] --
+-- ==========================================================
+-- [ Nixware CS2 ] Base + Skybox Changer (One File)
+-- ==========================================================
 
--- 1. Кэшируем функции и смещения для скорости
-local font = render.setup_font("C:/Windows/Fonts/verdanab.ttf", 12)
-local get_offset = engine.get_netvar_offset
+-- [[ 1. БАЗА И ХЕЛПЕРЫ ]] --
+-- Загружаем шрифт (размер 16, флаг 1 - обычно это обводка или тень)
+local my_font = render.setup_font("Verdana", 16, 1) 
 
--- Смещения (делаем один раз при загрузке)
-local off = {
-    hp = get_offset("client.dll", "C_BaseEntity", "m_iHealth"),
-    team = get_offset("client.dll", "C_BaseEntity", "m_iTeamNum"),
-    origin = get_offset("client.dll", "C_BaseEntity", "m_vOldOrigin")
+-- Простая функция плавного перехода (Lerp) на будущее
+local function lerp(a, b, t)
+    return a + (b - a) * t
+end
+
+-- [[ 2. ДАННЫЕ ДЛЯ СКАЙБОКСА ]] --
+-- Рабочие текстуры скайбоксов для CS2 / CS:GO
+local skyboxes = {
+    "sky_dust",
+    "sky_csgo_night02",
+    "sky_csgo_night02b",
+    "sky_csgo_cloudy01",
+    "sky_venice",
+    "sky_day02_05",
+    "nukeblank",
+    "office",
+    "italy",
+    "vertigo",
+    "vertigoblue_hdr",
+    "cs_tibet",
+    "vietnam"
 }
+local current_sky_index = 1
 
--- 2. Утилиты рендера
-local function rect_f(x, y, w, h, c) render.rect_filled(vec2_t(x, y), vec2_t(x+w, y+h), c, 2) end
-local function line(x1, y1, x2, y2, c) render.line(vec2_t(x1, y1), vec2_t(x2, y2), c) end
-
--- 3. Отрисовка
-register_callback("paint", function()
-    local lp = entitylist.get_local_player_pawn()
-    if not lp then return end
+-- Функция применения неба
+local function apply_skybox(index)
+    local sky = skyboxes[index]
     
-    local screen = render.screen_size()
-    local lp_team = lp:get_i32(off.team)
-    local accent = color_t(180, 140, 255, 255)
+    -- Выполняем консольную команду изменения неба 
+    -- (Никсвар должен байпасить sv_cheats для таких команд)
+    engine.execute_client_cmd("sv_skyname " .. sky)
+    
+    -- Выводим сообщение в консоль красивым цветом
+    color_print("[Nixware Skybox] Установлено небо: " .. sky .. "\n", color_t(100, 200, 255, 255))
+end
 
-    -- [ WATERMARK ]
-    local wm = string.format("nixware | %s | fps: %d", get_user_name(), math.floor(1/render.frame_time()))
-    render.text(wm, font, vec2_t(screen.x - 180, 20), accent)
+-- [[ 3. ОБРАБОТКА СОБЫТИЙ (ИВЕНТЫ) ]] --
 
-    -- [ ESP ]
-    local players = entitylist.get_entities("C_CSPlayerPawn")
-    for _, ent in pairs(players) do
-        local hp = ent:get_i32(off.hp)
-        local team = ent:get_i32(off.team)
+-- Перехватываем ввод в консоль
+register_callback("console_input", function(cmd)
+    -- Если написали "sky next"
+    if cmd == "sky next" then
+        current_sky_index = current_sky_index + 1
+        if current_sky_index > #skyboxes then current_sky_index = 1 end
+        apply_skybox(current_sky_index)
         
-        if ent:get_address() ~= lp:get_address() and hp > 0 and team ~= lp_team then
-            local origin = ent:get_vec(off.origin)
-            local b_pos = render.world_to_screen(origin)
-            local t_pos = render.world_to_screen(vec3_t(origin.x, origin.y, origin.z + 75))
-
-            if b_pos and t_pos then
-                local h = b_pos.y - t_pos.y
-                local w = h / 2
-                local x, y = t_pos.x - w / 2, t_pos.y
-
-                -- Corner Box
-                local l = w / 4
-                line(x, y, x + l, y, accent) line(x, y, x, y + l, accent) -- top-left
-                line(x + w, y, x + w - l, y, accent) line(x + w, y, x + w, y + l, accent) -- top-right
-                line(x, y + h, x + l, y + h, accent) line(x, y + h, x, y + h - l, accent) -- bot-left
-                line(x + w, y + h, x + w - l, y + h, accent) line(x + w, y + h, x + w, y + h - l, accent) -- bot-right
-
-                -- Health Bar
-                local bar_h = (h * hp) / 100
-                rect_f(x - 5, y, 2, h, color_t(10, 10, 10, 150))
-                rect_f(x - 5, y + (h - bar_h), 2, bar_h, color_t(100, 255, 100, 255))
-            end
-        end
+        return false -- Блокируем команду, чтобы в игре не писало "Unknown command"
+    
+    -- Если написали "sky prev"
+    elseif cmd == "sky prev" then
+        current_sky_index = current_sky_index - 1
+        if current_sky_index < 1 then current_sky_index = #skyboxes end
+        apply_skybox(current_sky_index)
+        
+        return false
     end
 end)
 
-color_print("Indercent.lua successfully initialized.\0", color_t(180, 140, 255, 255))
+-- Отрисовка визуала (HUD)
+register_callback("paint", function()
+    -- Показываем нашу мини-панель ТОЛЬКО когда открыто меню чита
+    if not ui.is_menu_opened() then return end
+
+    local screen = render.screen_size()
+    if not screen or not my_font then return end
+
+    -- Считаем координаты, чтобы панель была по центру сверху
+    local panel_w = 320
+    local panel_h = 70
+    local x = (screen.x / 2) - (panel_w / 2)
+    local y = 40
+
+    -- Рисуем фон панели (x, y, color, rounding)
+    render.rect_filled(vec2_t(x, y), vec2_t(x + panel_w, y + panel_h), color_t(20, 20, 20, 220), 8)
+    
+    -- Рисуем красивую обводку (x, y, color, rounding, thickness)
+    render.rect(vec2_t(x, y), vec2_t(x + panel_w, y + panel_h), color_t(100, 150, 255, 255), 8, 2)
+
+    -- Рисуем текст
+    render.text("☁ SKYBOX CHANGER", my_font, vec2_t(x + 10, y + 10), color_t(255, 255, 255, 255))
+    render.text("Текущее небо: " .. skyboxes[current_sky_index], my_font, vec2_t(x + 10, y + 30), color_t(100, 255, 100, 255))
+    render.text("Введи 'sky next' или 'sky prev' в консоль", my_font, vec2_t(x + 10, y + 50), color_t(150, 150, 150, 255))
+end)
